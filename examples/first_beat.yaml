@@ -1,0 +1,90 @@
+# Phase 2 human test: compile with `daw-compile examples/first_beat.yaml`,
+# listen, then change any one field, recompile, and hear exactly that change.
+ir_version: 1
+meta:
+  title: First Beat
+  key: C minor
+tempo:
+  bpm: 90
+time_signature: "4/4"
+
+arrangement:
+  sections:
+    - name: intro        # drums only, half density
+      bars: 4
+      intent: { energy: 0.35 }
+    - name: main         # full groove with bass
+      bars: 8
+      intent: { energy: 0.8 }
+
+tracks:
+  - name: kick
+    sample: ../assets/samples/kick.wav
+    gain_db: -6.0
+    clips:
+      - section: intro
+        loop_every_bars: 1
+        notes:
+          - { start: 0.0, velocity: 118 }
+          - { start: 2.5, velocity: 96 }
+      - section: main
+        loop_every_bars: 1
+        notes:
+          - { start: 0.0, velocity: 127 }
+          - { start: 1.75, velocity: 92, offset_ms: 6.5 }   # lazy ghost hit
+          - { start: 2.5, velocity: 112 }
+
+  - name: snare
+    sample: ../assets/samples/snare.wav
+    gain_db: -8.0
+    fx:
+      - { type: highpass, cutoff_hz: 150 }
+    clips:
+      - section: main
+        loop_every_bars: 1
+        notes:
+          - { start: 1.0, velocity: 112 }
+          - { start: 3.0, velocity: 118, offset_ms: 4.0 }   # back-of-beat backbeat
+
+  - name: hat
+    sample: ../assets/samples/hat.wav
+    gain_db: -7.0
+    pan: 0.2
+    fx:
+      - { type: highpass, cutoff_hz: 600 }
+    clips:
+      - section: intro
+        loop_every_bars: 1
+        notes:
+          - { start: 0.0, velocity: 90 }
+          - { start: 1.0, velocity: 72 }
+          - { start: 2.0, velocity: 90 }
+          - { start: 3.0, velocity: 72 }
+      - section: main
+        loop_every_bars: 1
+        notes:
+          - { start: 0.0, velocity: 96 }
+          - { start: 0.5, velocity: 68 }
+          - { start: 1.0, velocity: 92 }
+          - { start: 1.5, velocity: 70 }
+          - { start: 2.0, velocity: 96 }
+          - { start: 2.5, velocity: 68 }
+          - { start: 3.0, velocity: 92 }
+          - { start: 3.5, velocity: 74 }
+
+  - name: bass
+    sample: ../assets/samples/bass.wav
+    gain_db: -7.0
+    fx:
+      - { type: lowpass, cutoff_hz: 900, q: 0.9 }
+    clips:
+      - section: main          # C C Ab Ab Eb Eb Bb Bb — i VI III VII in C minor
+        notes:
+          - { pitch: 60, start: 0.0,  duration: 3.5 }
+          - { pitch: 60, start: 4.0,  duration: 3.5 }
+          - { pitch: 56, start: 8.0,  duration: 3.5 }
+          - { pitch: 56, start: 12.0, duration: 3.5 }
+          - { pitch: 63, start: 16.0, duration: 3.5 }
+          - { pitch: 63, start: 20.0, duration: 3.5 }
+          - { pitch: 58, start: 24.0, duration: 3.5 }
+          - { pitch: 58, start: 28.0, duration: 3.5 }

@@ -65,7 +65,8 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, fn in [("kick", kick), ("snare", snare), ("hat", hat), ("bass", bass)]:
         path = OUT / f"{name}.wav"
-        sf.write(path, fn().astype(np.float32), SR, subtype="FLOAT")
+        # PCM_24: float WAVs get a wall-clock PEAK chunk, breaking reproducible bytes
+        sf.write(path, fn().astype(np.float32), SR, subtype="PCM_24")
         print(f"wrote {path}")
 
 

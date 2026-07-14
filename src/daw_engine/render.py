@@ -10,7 +10,7 @@ Design constraints (see implementation-plan.md, "Architectural invariants"):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import dawdreamer as daw
@@ -30,6 +30,27 @@ class Note:
     start_beats: float = 0.0
     # None -> hold for the full sample length (one-shot drum behavior)
     duration_beats: float | None = None
+    # microtiming: applied in seconds after the beat grid, so groove survives BPM changes
+    offset_ms: float = 0.0
+
+
+# Maps IR fx type -> DawDreamer FilterProcessor mode
+FX_MODES = {
+    "lowpass": "low",
+    "highpass": "high",
+    "bandpass": "band",
+    "low_shelf": "low_shelf",
+    "high_shelf": "high_shelf",
+    "notch": "notch",
+}
+
+
+@dataclass(frozen=True)
+class Fx:
+    type: str  # one of FX_MODES
+    cutoff_hz: float
+    q: float = 0.707
+    gain_db: float = 0.0  # used by shelf modes
 
 
 @dataclass(frozen=True)
@@ -39,6 +60,7 @@ class Track:
     notes: tuple[Note, ...] = ()
     gain_db: float = 0.0
     pan: float = 0.0  # -1 (hard left) .. +1 (hard right)
+    fx: tuple[Fx, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,14 +102,24 @@ def _render_track(
 
     sampler = engine.make_sampler_processor(track.name, data)
     for note in track.notes:
-        start = note.start_beats * seconds_per_beat
+        start = max(0.0, note.start_beats * seconds_per_beat + note.offset_ms / 1000.0)
         if note.duration_beats is None:
             duration = sample_seconds
         else:
             duration = note.duration_beats * seconds_per_beat
         sampler.add_midi_note(note.pitch, note.velocity, start, duration)
 
-    engine.load_graph([(sampler, [])])
+    graph = [(sampler, [])]
+    prev_name = track.name
+    for i, fx in enumerate(track.fx):
+        fx_name = f"{track.name}_fx{i}"
+        filt = engine.make_filter_processor(
+            fx_name, FX_MODES[fx.type], fx.cutoff_hz, fx.q, 10.0 ** (fx.gain_db / 20.0)
+        )
+        graph.append((filt, [prev_name]))
+        prev_name = fx_name
+
+    engine.load_graph(graph)
     engine.render(total_seconds)
     audio = engine.get_audio().astype(np.float32)
     return _gain_pan(audio, track.gain_db, track.pan)
@@ -109,7 +141,9 @@ def render(spec: RenderSpec, out_dir: str | Path) -> dict[str, Path]:
         audio = _render_track(engine, track, spec, total_seconds)
         stems.append(audio)
         stem_path = stems_dir / f"{track.name}.wav"
-        sf.write(stem_path, audio.T, spec.sample_rate, subtype="FLOAT")
+        # PCM_24, not FLOAT: libsndfile stamps float WAVs with a PEAK chunk
+        # containing the wall-clock write time, which breaks bit-identical output
+        sf.write(stem_path, audio.T, spec.sample_rate, subtype="PCM_24")
         paths[track.name] = stem_path
 
     length = max((s.shape[1] for s in stems), default=int(total_seconds * spec.sample_rate))
@@ -125,6 +159,6 @@ def render(spec: RenderSpec, out_dir: str | Path) -> dict[str, Path]:
         )
 
     master_path = out_dir / "master.wav"
-    sf.write(master_path, master.T, spec.sample_rate, subtype="FLOAT")
+    sf.write(master_path, master.T, spec.sample_rate, subtype="PCM_24")
     paths["master"] = master_path
     return paths

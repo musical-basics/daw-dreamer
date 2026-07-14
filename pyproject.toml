@@ -7,7 +7,11 @@ dependencies = [
     "dawdreamer>=0.8.0",
     "numpy>=1.26",
     "soundfile>=0.12",
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+daw-compile = "daw_engine.compiler:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

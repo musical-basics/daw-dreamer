@@ -6,9 +6,20 @@ Deterministic music production engine: an LLM writes a song as a diffable docume
 - [extended-ideas.md](extended-ideas.md) — second-order dynamics and expectation-based extensions
 - [implementation-plan.md](implementation-plan.md) — the 12-phase build plan
 
-## Status: Phase 1 (render harness)
+## Status: Phase 2 (song IR + compiler)
 
-Sample-based, deterministic rendering to master + per-stem WAVs via DawDreamer.
+The song is a YAML document — tempo, key, sections (with reserved intent
+fields), tracks, note events with sub-millisecond microtiming, and FX chains —
+compiled deterministically to master + per-stem WAVs via DawDreamer.
+
+```bash
+.venv/bin/daw-compile examples/first_beat.yaml   # -> renders/first_beat/
+```
+
+Phase 2 human test: listen, then edit any one field in
+[examples/first_beat.yaml](examples/first_beat.yaml) (swap a sample, nudge an
+`offset_ms`, change a section's `bars`), recompile, and hear exactly that
+change. Validation errors name the offending field's path.
 
 ### Setup
 
