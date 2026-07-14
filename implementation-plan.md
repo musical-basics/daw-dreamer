@@ -1,6 +1,6 @@
 # Implementation Plan: Deterministic Music Production Engine
 
-Ten phases, each ending in something a human can test by ear or eye before the next phase begins. The ordering follows one rule: **the things everything else depends on (the renderer, the song IR, the machine-readable analysis report) come first, and every analysis feature ships in the same report format from day one** — so later phases (linter, quality loop, agents) consume existing infrastructure instead of forcing rewrites.
+Ten core phases plus two extension phases (from [extended-ideas.md](extended-ideas.md)), each ending in something a human can test by ear or eye before the next phase begins. The ordering follows one rule: **the things everything else depends on (the renderer, the song IR, the machine-readable analysis report) come first, and every analysis feature ships in the same report format from day one** — so later phases (linter, quality loop, agents) consume existing infrastructure instead of forcing rewrites.
 
 ## Architectural invariants (decided now, enforced from Phase 1)
 
@@ -26,6 +26,8 @@ These are the decisions that prevent long-term structural problems:
 
 **Build:** The textual intermediate representation (JSON or YAML): tempo map, key, arrangement grid (sections → bars), tracks (sample refs or synth patch parameter sets), note events with velocity and microtiming offsets, per-track gain/pan, and a basic FX slot list (start with just gain, EQ, and a lowpass — enough to prove the shape). A `compile(ir) -> {master.wav, stems/*.wav}` function built on Phase 1. Schema validation with clear error messages.
 
+**Future-proofing for the extended-ideas stack (schema fields now, features later):** microtiming offsets stored at fine resolution (sub-millisecond, so 1/f humanization and DFA analysis have real data to work with), planned section boundaries as explicit first-class data (so Foote novelty in Phase 8 can validate the arrangement against its own plan), and optional section-level intent fields — target energy and target harmonic color per section (empty for now; the Phase 12 control layer fills them). These are a few schema fields today versus a painful migration later.
+
 **Why now:** This is the highest-risk structural decision in the whole project. Getting the IR shape right early — sections, tracks, events, FX chains as data — is what lets every later phase (linter fixes, groove templates, agent edits) be "edit the document, recompile." Retrofitting an IR under a pile of analysis code would be the classic long-term structural failure.
 
 **Human test:** Hand-write `first_beat.yaml` for an 8-bar beat, compile, listen. Edit one field (swap the kick sample, nudge a snare 20ms late, change a section length), recompile, and hear exactly that change and nothing else. Break the schema on purpose and confirm the error message tells you what's wrong.
@@ -33,6 +35,8 @@ These are the decisions that prevent long-term structural problems:
 ## Phase 3 — Report card v1: single-signal analysis + contact sheets
 
 **Build:** The analysis suite skeleton (librosa + Essentia + MoSQITo) producing one `report.json` per render, covering per-stem and master: integrated/short-term LUFS, crest factor, spectral tilt and centroid, sub ratio (30–90Hz vs total), attack/decay envelope stats, detected fundamental pitch, stereo width and mono-fold correlation, and the Zwicker/Fastl psychoacoustic set (sharpness, roughness, fluctuation strength). Plus the first visual contact sheets as PNGs: multi-resolution mel spectrogram sheet (transient / bar / song zoom levels) and the onset raster (all stems' onsets stacked piano-roll style).
+
+**Pulled in from extended-ideas:** the harmonic color trajectory, computed on both sides of the render — from the IR's MIDI (exact) and from the rendered audio's chromagram (NNLS) — mapped through the existing MidiTrain pitch-class-to-color mapping, converted to CIELAB so ΔE (CIEDE2000) between windows is perceptual harmonic novelty. Divergence between the MIDI-side and audio-side color is "timbral harmonic distortion" (a lint rule in Phase 6). Render the whole-song **harmonic barcode** strip above the spectrogram in the contact sheet. This comes almost free once the report skeleton exists, and it gives the render↔IR validation loop from day one.
 
 **Why now:** The report is the second pillar of the architecture (invariant 2). Everything from Phase 4 onward is a consumer or refinement of this report.
 
@@ -56,7 +60,7 @@ These are the decisions that prevent long-term structural problems:
 
 ## Phase 6 — Mix linter with named rules
 
-**Build:** The linter as a pure consumer of report.json: `MONO_LOW_END`, `KICK_BASS_MASKING`, `MUD_BUDGET`, `HARSHNESS_CEILING`, `CREST_FACTOR_RANGE` (per bus), `TUNED_KICK`, `PHASE_CANCELLATION`. Deterministic pass/warn/fail, every message phrased as a fix ("high-pass the pad at 180Hz or shorten its release"), thresholds in a config file with a default profile and named genre-preset stubs. Exit codes so it works in scripts.
+**Build:** The linter as a pure consumer of report.json: `MONO_LOW_END`, `KICK_BASS_MASKING`, `MUD_BUDGET`, `HARSHNESS_CEILING`, `CREST_FACTOR_RANGE` (per bus), `TUNED_KICK`, `PHASE_CANCELLATION`, plus two pulled in from extended-ideas: `TIMBRAL_HARMONIC_DISTORTION` (MIDI-side vs audio-side color divergence from Phase 3) and `SYNCOPATION_SWEET_SPOT` (Longuet-Higgins syncopation work per bar targeted at Witek's inverted-U optimum — a range rule, not a direction rule). Deterministic pass/warn/fail, every message phrased as a fix ("high-pass the pad at 180Hz or shorten its release"), thresholds in a config file with a default profile and named genre-preset stubs. Exit codes so it works in scripts.
 
 **Why now:** It's a thin rule layer over Phases 3+5 — cheap to build once the analysis exists, and it's the "compiler errors for mixes" artifact that makes the Phase 9 loop converge instead of wander.
 
@@ -66,13 +70,15 @@ These are the decisions that prevent long-term structural problems:
 
 **Build:** The composition-correctness layer that writes *into* the IR: an OR-tools-style constraint solver for chord voicings and voice leading (no parallel fifths, range limits, smoothness objective) taking intent as input ("gospel-ish reharm, soprano under E5"); deterministic kick-tuned-to-key transposition using Phase 3's fundamental detection; groove template extraction (microtiming + velocity deviations from a played MIDI performance) stored as reusable data and applied to quantized IR events.
 
+**Pulled in from extended-ideas — build it this way from day one:** synthetic humanization generates its jitter as **1/f noise**, not white noise (Hennig: human drummers' timing deviations are long-range correlated, and listeners prefer 1/f humanization), and detrended fluctuation analysis on microtiming ships as the "humanness score" in the report card. This is a generation-time design decision, which is exactly why it belongs in this phase rather than retrofitted later.
+
 **Why now:** Independent of the mixing stack, but it must land before the quality loop so the LLM composes through the solver instead of emitting raw note lists — otherwise Phase 9 spends its iterations fixing theory errors the solver eliminates for free.
 
 **Human test:** Give the solver a progression request and render it — check by ear and by eye (no voice-leading clams, voicings playable). Render the same drum pattern three ways: quantized, with a groove template extracted from your own playing, and with the template at 50% strength. The grooved version should feel obviously more alive in a blind A/B.
 
 ## Phase 8 — Reference profiles, structure analysis, genre style sheets
 
-**Build:** The reference decompiler-analyzer: run any commercial track through the pipeline to extract a **reference profile** (spectral tilt curve, dynamics, width-by-band, onset density per section, section lengths) plus structure visuals — self-similarity matrix PNG, spectral-flux novelty curve (audio scene cuts), tension curve (dissonance + loudness + density + register composite). Genre style sheets as machine-readable specs (BPM range, swing %, arrangement template, spectral targets, density curves) that reference profiles can be averaged into. A `distance(report, profile)` scorer.
+**Build:** The reference decompiler-analyzer: run any commercial track through the pipeline to extract a **reference profile** (spectral tilt curve, dynamics, width-by-band, onset density per section, section lengths) plus structure visuals — self-similarity matrix PNG, **Foote novelty** (checkerboard kernel over the self-similarity diagonal — upgraded from plain spectral flux, and validated against the IR's planned section boundaries: mismatches mean the arrangement isn't articulating its own form), tension curve (dissonance + loudness + density + register composite). Genre style sheets as machine-readable specs (BPM range, swing %, arrangement template, spectral targets, density curves) that reference profiles can be averaged into. A `distance(report, profile)` scorer.
 
 **Why now:** This defines the objective function before the loop runs. Correctness (linter) says "not broken"; reference distance says "close to good." Both must exist before Phase 9 or the loop has nothing to optimize.
 
@@ -96,19 +102,43 @@ These are the decisions that prevent long-term structural problems:
 
 ---
 
+# Extension phases (from extended-ideas.md)
+
+Everything below is second-order analysis or generative control built on the working loop. None of it changes the architecture — new report.json fields, new lint rules in config, new solver constraints — which is why it can safely come after Phase 10. The three cheap wins from extended-ideas that *don't* wait are already folded in above: 1/f humanization (Phase 7), color trajectory + harmonic barcode (Phase 3), Foote novelty and syncopation targeting (Phases 8 and 6).
+
+## Phase 11 — Second-order dynamics: motion, expectation, and feel as numbers
+
+**Build:** The derivative stack, all as report-card extensions and config lint rules. **Color kinematics:** velocity of the color trajectory = harmonic rhythm, acceleration = harmonic drive, jerk spikes = surprise modulations, with lint rules `MIN_SECTION_COLOR_DELTA`, `REGIME_STABILITY`, `COLOR_MONOTONY`. **Saturation as tonal clarity** (chromatic mud desaturates; the desaturate/re-saturate arc per section). **Schroeder bridge:** per-band dissipation constants fit inside the accumulator framework — reverb, sustain, and release character sensed natively (RT60 as slow dissipation). **Expectation layer:** PPM/Markov surprisal on the IR's note stream (upgrade path to IDyOM), Dubnov Information Rate as the engagement-over-time curve, LZ compression ratio as catchiness proxy, chord-transition entropy rate as a genre-sheet number. **Dynamical-systems metrics:** recurrence quantification (determinism of the groove trajectory as the grooviness number), oscillator entrainment strength, Voss–Clarke 1/f checks on loudness and pitch fluctuations, danceability band (0.5–4Hz modulation energy × beat clarity). **Cross-stem field dynamics:** co-movement graphs (graph density = the band moves together), saliency dominance ratio ("the listener doesn't know what to listen to" as a number), call-and-response detection.
+
+**Why after 10:** these metrics need calibration against human judgment to be trustworthy, and Phase 10 built exactly that calibration pipeline. Shipping thirty uncalibrated numbers into the loop earlier would add noise, not signal.
+
+**Human test:** run the new metrics over your own catalog plus reference tracks and check them against known ground truth: the groove you know is pocket scores high determinism, the song that loses people at the bridge shows the Information Rate dip, the boring loop trips `COLOR_MONOTONY`. Then A/B-poll a few (danceability, grooviness) against audience votes to calibrate weights.
+
+## Phase 12 — Generative control: composing to a trajectory
+
+**Build:** The layer where the second-order variables become the *spec* instead of the measurement. **Color scripts:** the Arranger specifies a target color trajectory (Pixar-style), and the Phase 7 harmony solver composes chords whose mapped colors trace it within tolerance. **Builds and drops as phase transitions:** energy-injection accounting with latent-heat detection, `DROP_LATENT_ENERGY` (accumulated potential required before a drop marker) and `PLATEAU_DETECTOR` lint rules, hysteresis-loop area as the "how hard the drop hits" number. **Arrangement as control theory:** the target energy/color curves stored in the IR's section-intent fields (reserved in Phase 2) become reference trajectories; layer entries, filter cutoffs, and drum density are actuators; overshoot/settling-time/steady-state-error diagnostics name arrangement failures. **Force-model composition:** Tymoczko voice-leading work, Lerdahl tension, and Larson's gravity/magnetism/inertia as solver objectives — calculated violations of the forces are the hooks. Cross-band energy flow fields and the composite cadence detector validate arrivals.
+
+**Why last:** this changes how the Arranger *writes* the IR, so it needs the Phase 9 loop already converging — otherwise there's no way to test whether trajectory-driven arrangement actually sounds better than the Phase 9 baseline.
+
+**Human test:** the inverse-problem demo. Draw a target energy/color script for a 64-bar track, let the engine schedule the arrangement to track it, render, and check both directions: the measured curves track the spec (control is working), and a blind A/B against a Phase 9-era arrangement of the same material sounds more intentional (control is worth it).
+
+---
+
 ## Dependency summary
 
 ```
 1 Render harness
-└─ 2 Song IR + compiler
-   ├─ 3 Report card (single-signal)
+└─ 2 Song IR + compiler          (schema reserves: microtiming res, section bounds, intent fields)
+   ├─ 3 Report card + color trajectory/barcode
    │  ├─ 4 Lexicon + A/B compare      (human calibration starts)
    │  └─ 5 Interaction analysis
-   │     └─ 6 Mix linter
-   ├─ 7 Theory solver + grooves
-   └─ 8 Reference profiles + genre sheets
+   │     └─ 6 Mix linter (+ TIMBRAL_HARMONIC_DISTORTION, SYNCOPATION_SWEET_SPOT)
+   ├─ 7 Theory solver + grooves (1/f humanization + DFA)
+   └─ 8 Reference profiles + genre sheets (Foote novelty vs planned sections)
       └─ 9 Quality loop + regression tests   (needs 6, 7, 8)
          └─ 10 Critics + preference calibration + agent fleet
+            └─ 11 Second-order dynamics (motion, expectation, feel)
+               └─ 12 Generative control (color scripts, energy trajectories, force models)
 ```
 
 Phases 4, 5, and 7 are mutually independent and can be reordered or parallelized if needed; everything else is a hard ordering.
