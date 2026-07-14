@@ -1,0 +1,23 @@
+[project]
+name = "daw-engine"
+version = "0.1.0"
+description = "Deterministic music production engine: DawDreamer render harness (Phase 1)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "dawdreamer>=0.8.0",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
